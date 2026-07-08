@@ -1,0 +1,4 @@
+telethon>=1.34
+aiogram>=3.4
+anthropic>=0.40
+python-dotenv>=1.0

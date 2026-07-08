@@ -1,0 +1,13 @@
+# секреты и сессия — НИКОГДА не коммитить
+.env
+*.session
+*.session-journal
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# собранный профиль стиля может содержать личные примеры — по желанию
+# style/examples/
