@@ -27,6 +27,8 @@ MONITORED_CHATS = _split("MONITORED_CHATS")
 
 AUTO_REACT_EMOJI = os.environ.get("AUTO_REACT_EMOJI", "👍")
 STYLE_PROFILE_PATH = os.environ.get("STYLE_PROFILE_PATH", "style/style_profile.md")
+# База знаний (методология IPM, термины) — для фактической точности ответов.
+KNOWLEDGE_BASE_PATH = os.environ.get("KNOWLEDGE_BASE_PATH", "knowledge_base.md")
 
 # Как обрабатывать входящие ЛС:
 #   off          — не готовить черновики на личку вообще
