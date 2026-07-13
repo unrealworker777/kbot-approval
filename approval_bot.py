@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Отдельный официальный Telegram-бот (Bot API, через @BotFather) — шлёт
-Константину в личку черновик + оригинальное сообщение с кнопками
-Одобрить / Заменить / Пропустить. Реально отправляет текст только userbot.py,
-и только после явного нажатия «Одобрить» (или после присланной замены).
+Константину в личку черновик + оригинальное сообщение с кнопками.
+Реально отправляет текст только userbot.py, после явного одобрения.
 """
 
+import asyncio
 import html
 
 from aiogram import Bot, Dispatcher, F
@@ -15,13 +15,14 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import config
+import draft
 import pending
 import userbot
 
 bot = Bot(token=config.APPROVAL_BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-CONTEXT_LIMIT = 1500  # чтобы карточка не превысила лимит Telegram в 4096 символов
+CONTEXT_LIMIT = 1500
 
 KIND_LABEL = {
     "comment": "💬 Комментарий к посту",
@@ -37,13 +38,22 @@ class EditState(StatesGroup):
 def _keyboard(action_id):
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve:{action_id}"),
-        InlineKeyboardButton(text="✏️ Заменить", callback_data=f"edit:{action_id}"),
+        InlineKeyboardButton(text="🔁 Другие варианты", callback_data=f"more:{action_id}"),
         InlineKeyboardButton(text="🚫 Пропустить", callback_data=f"skip:{action_id}"),
     ]])
 
 
+def _variants_keyboard(action_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Вариант 1", callback_data=f"pick:{action_id}:0"),
+         InlineKeyboardButton(text="✅ Вариант 2", callback_data=f"pick:{action_id}:1")],
+        [InlineKeyboardButton(text="🔁 Ещё 2 варианта", callback_data=f"more:{action_id}"),
+         InlineKeyboardButton(text="✏️ Свой текст", callback_data=f"edit:{action_id}")],
+        [InlineKeyboardButton(text="🚫 Пропустить", callback_data=f"skip:{action_id}")],
+    ])
+
+
 def _esc(text, limit=None):
-    """HTML-экранирование + опциональная обрезка (в постах бывают < > & и длинные тексты)."""
     text = text or ""
     if limit and len(text) > limit:
         text = text[:limit] + "…"
@@ -94,6 +104,49 @@ async def cb_skip(cq: CallbackQuery):
     if action:
         await cq.message.edit_text(_card_text(action, "🚫 <b>Пропущено.</b>"), parse_mode="HTML")
     await cq.answer("Пропущено")
+
+
+@dp.callback_query(F.data.startswith("more:"))
+async def cb_more(cq: CallbackQuery):
+    action_id = cq.data.split(":", 1)[1]
+    action = pending.get(action_id)
+    if not action:
+        await cq.answer("Уже обработано или устарело.")
+        return
+    await cq.answer("Готовлю 2 варианта…")
+    already = [action.draft_text] + list(action.variants)
+    variants = await asyncio.to_thread(
+        draft.generate_variants, action.kind, action.context_text, 2, already)
+    action.variants = variants
+    label = KIND_LABEL.get(action.kind, action.kind)
+    txt = (f"{label}\n\n"
+           f"<b>Сообщение:</b>\n{_esc(action.context_text, CONTEXT_LIMIT)}\n\n"
+           f"<b>Вариант 1:</b>\n{_esc(variants[0])}\n\n"
+           f"<b>Вариант 2:</b>\n{_esc(variants[1])}")
+    await cq.message.answer(txt, reply_markup=_variants_keyboard(action_id), parse_mode="HTML")
+
+
+@dp.callback_query(F.data.startswith("pick:"))
+async def cb_pick(cq: CallbackQuery):
+    _, action_id, idx = cq.data.split(":")
+    action = pending.get(action_id)
+    if not action or not action.variants:
+        await cq.answer("Уже обработано или устарело.")
+        return
+    try:
+        text = action.variants[int(idx)]
+    except (IndexError, ValueError):
+        await cq.answer("Вариант не найден.")
+        return
+    await cq.answer()
+    try:
+        await userbot.send_action(action, text)
+    except Exception as e:
+        await cq.message.answer(f"⚠️ <b>Ошибка отправки:</b> {_esc(str(e))}", parse_mode="HTML")
+        return
+    pending.pop(action_id)
+    await cq.message.edit_reply_markup(reply_markup=None)
+    await cq.message.answer(f"✅ <b>Отправлен вариант {int(idx) + 1}.</b>", parse_mode="HTML")
 
 
 @dp.callback_query(F.data.startswith("edit:"))
