@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Генерация черновика ответа в стиле Константина через Claude API.
-
-Функция синхронная — в userbot.py её вызывают через asyncio.to_thread(...),
-чтобы сетевой запрос не блокировал event loop.
-"""
+"""Генерация черновика ответа в стиле Константина через Claude API."""
 
 from pathlib import Path
 
@@ -12,7 +7,7 @@ import anthropic
 
 import config
 
-_client = anthropic.Anthropic()  # берёт ANTHROPIC_API_KEY из окружения или профиль `ant auth login`
+_client = anthropic.Anthropic()
 
 SYSTEM_TEMPLATE = """Ты помогаешь Константину быстро отвечать в Telegram — комментарии под постами,
 реплики в чатах и личные сообщения.
@@ -85,5 +80,19 @@ def generate_draft(kind, context_text, extra_instruction=None):
         )
         return "".join(b.text for b in response.content if b.type == "text").strip()
     except Exception as e:
-        # не роняем хендлер — вернём метку, человек напишет сам
         return f"[Ошибка генерации черновика: {e}]"
+
+
+def generate_variants(kind, context_text, n=2, avoid=None):
+    """Возвращает список из n РАЗНЫХ альтернативных черновиков (для кнопки «Другие варианты»)."""
+    avoid = list(avoid or [])
+    variants = []
+    for _ in range(n):
+        seen = avoid + variants
+        instr = ("Дай ДРУГОЙ вариант ответа — другой заход и формулировки, "
+                 "не повторяй уже предложенное.")
+        if seen:
+            joined = "\n---\n".join(seen)
+            instr += f"\nУже были такие варианты (не повторяй их):\n{joined}"
+        variants.append(generate_draft(kind, context_text, extra_instruction=instr))
+    return variants
