@@ -5,14 +5,10 @@
 - Авто-реакции на посты в отслеживаемых каналах — низкий риск, без одобрения.
 - Комментарии к постам, ответы в чатах и в ЛС — генерируются черновиком и
   ВСЕГДА ждут одобрения через approval_bot.py, прежде чем реально уйдут.
-
-Важно про риск бана: использование Telegram API для автоматизации личного
-аккаунта формально не приветствуется правилами Telegram. Здесь каждое
-текстовое действие проходит через ручное одобрение — это не спам-паттерн,
-но полностью исключить риск нельзя.
 """
 
 import asyncio
+from datetime import datetime, timezone
 
 from telethon import TelegramClient, events
 from telethon.tl.functions.messages import GetDiscussionMessageRequest, SendReactionRequest
@@ -24,17 +20,20 @@ import pending
 
 client = TelegramClient("konstantin_session", config.TELEGRAM_API_ID, config.TELEGRAM_API_HASH)
 
-# main.py подставляет сюда approval_bot.notify до старта опроса
 approval_notifier = None
+
+_START_TS = None
+_ME_ID = None
 
 
 async def start():
+    global _START_TS, _ME_ID
     await client.start(phone=config.TELEGRAM_PHONE)
     me = await client.get_me()
+    _ME_ID = me.id
+    _START_TS = datetime.now(timezone.utc)
     print(f"Юзербот запущен как {me.first_name} (id={me.id})")
 
-    # Регистрируем хендлеры ЯВНО и только если списки заданы — иначе пустой
-    # список превращался бы в «слушать вообще всё» и лайкать везде.
     if config.MONITORED_CHANNELS:
         client.add_event_handler(
             on_channel_post, events.NewMessage(chats=config.MONITORED_CHANNELS))
@@ -64,15 +63,46 @@ async def _notify(action: pending.PendingAction):
         print(f"[Нет approval_notifier] Черновик {action.id}: {action.draft_text}")
 
 
+def _is_old(event):
+    """True, если сообщение пришло ДО запуска бота — такие не трогаем."""
+    d = getattr(event.message, "date", None)
+    return _START_TS is not None and d is not None and d < _START_TS
+
+
+async def _skip_sender(event):
+    """True, если отправитель — бот или мы сами (защита от самозацикла)."""
+    if _ME_ID is not None and getattr(event, "sender_id", None) == _ME_ID:
+        return True
+    sender = await event.get_sender()
+    if getattr(sender, "bot", False):
+        return True
+    return False
+
+
+def _meaningless(text):
+    """True, если отвечать нет смысла: короткое «спасибо/ок/👍» и т.п."""
+    t = (text or "").strip().lower()
+    cleaned = t.strip(" .!?)(-—…,")
+    if not cleaned:
+        return True
+    if cleaned in config.STOP_REPLIES:
+        return True
+    if len(cleaned) < config.MIN_MEANINGFUL_LEN:
+        first = cleaned.split()[0] if cleaned.split() else cleaned
+        if first in config.STOP_REPLIES:
+            return True
+    return False
+
+
 async def on_channel_post(event):
-    # интересуют только посты в каналах (broadcast), не сообщения в супергруппах
     if not event.is_channel or event.is_group:
+        return
+    if _is_old(event):
         return
     text = event.raw_text or ""
     if not text.strip():
         return
 
-    # авто-реакция — не текст, низкий риск, без одобрения
     try:
         await client(SendReactionRequest(
             peer=await event.get_input_chat(),
@@ -92,12 +122,14 @@ async def on_channel_post(event):
 
 async def on_chat_message(event):
     if event.out:
-        return  # свои сообщения игнорируем
+        return
+    if _is_old(event) or await _skip_sender(event):
+        return
     reply = await event.get_reply_message()
     if not reply or not reply.out:
-        return  # реагируем только на ответы НА сообщения Константина
+        return
     text = event.raw_text or ""
-    if not text.strip():
+    if not text.strip() or _meaningless(text):
         return
 
     draft_text = await asyncio.to_thread(draft.generate_draft, "chat_reply", text)
@@ -111,12 +143,12 @@ async def on_chat_message(event):
 async def on_private_message(event):
     if event.out:
         return
+    if _is_old(event) or await _skip_sender(event):
+        return
     text = event.raw_text or ""
-    if not text.strip():
+    if not text.strip() or _meaningless(text):
         return
 
-    # приватность: по умолчанию не трогаем переписки с контактами (семья, текущие
-    # клиенты) — их содержимое не уходит в API. Только холодные входящие.
     if config.DM_HANDLING == "non_contacts":
         sender = await event.get_sender()
         if getattr(sender, "contact", False):
@@ -133,16 +165,13 @@ async def on_private_message(event):
 async def send_action(action: pending.PendingAction, text: str):
     """Реально отправляет одобренный (или заменённый) текст от имени Константина."""
     if action.kind == "comment":
-        # Комментарий к посту канала уходит НЕ в сам канал, а в привязанную
-        # группу обсуждений — ответом на авто-форвард поста туда.
         disc = await client(GetDiscussionMessageRequest(
             peer=action.chat_id, msg_id=action.reply_to_msg_id))
         if not disc.messages:
-            raise RuntimeError(
-                "У канала нет группы обсуждений — комментарий оставить нельзя.")
+            raise RuntimeError("У канала нет группы обсуждений — комментарий оставить нельзя.")
         top = disc.messages[0]
         await client.send_message(top.peer_id, text, reply_to=top.id)
     elif action.kind == "dm_reply":
         await client.send_message(action.chat_id, text)
-    else:  # chat_reply
+    else:
         await client.send_message(action.chat_id, text, reply_to=action.reply_to_msg_id)
