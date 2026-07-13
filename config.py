@@ -39,3 +39,11 @@ DM_HANDLING = os.environ.get("DM_HANDLING", "non_contacts").strip().lower()
 
 # Модель для черновиков (Haiku — быстро и дёшево для потоковых коротких ответов)
 DRAFT_MODEL = os.environ.get("DRAFT_MODEL", "claude-haiku-4-5-20251001")
+
+# Фильтр пустых сообщений: на короткие благодарности/реакции бот не отвечает.
+MIN_MEANINGFUL_LEN = int(os.environ.get("MIN_MEANINGFUL_LEN", "12"))
+STOP_REPLIES = _split("STOP_REPLIES") or [
+    "спасибо", "спс", "ок", "окей", "хорошо", "понял", "понятно", "ясно",
+    "супер", "класс", "топ", "согласен", "верно", "точно", "+", "++", "да", "нет",
+    "👍", "🔥", "❤", "🙏", "👏",
+]
