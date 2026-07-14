@@ -1,10 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Юзербот на личном аккаунте Константина (Telethon).
-
-- Авто-реакции на посты в отслеживаемых каналах — низкий риск, без одобрения.
-- Комментарии к постам, ответы в чатах и в ЛС — генерируются черновиком и
-  ВСЕГДА ждут одобрения через approval_bot.py, прежде чем реально уйдут.
+Реакции — сразу. Тексты — только после одобрения через approval_bot.py.
 """
 
 import asyncio
@@ -64,19 +61,32 @@ async def _notify(action: pending.PendingAction):
 
 
 def _is_old(event):
-    """True, если сообщение пришло ДО запуска бота — такие не трогаем."""
     d = getattr(event.message, "date", None)
     return _START_TS is not None and d is not None and d < _START_TS
 
 
 async def _skip_sender(event):
-    """True, если отправитель — бот или мы сами (защита от самозацикла)."""
     if _ME_ID is not None and getattr(event, "sender_id", None) == _ME_ID:
         return True
     sender = await event.get_sender()
     if getattr(sender, "bot", False):
         return True
     return False
+
+
+async def _msg_link(event):
+    """Ссылка на оригинальный пост/сообщение: t.me/username/id или t.me/c/short/id."""
+    try:
+        chat = await event.get_chat()
+        uname = getattr(chat, "username", None)
+        if uname:
+            return f"https://t.me/{uname}/{event.id}"
+        cid = event.chat_id
+        if cid is not None and str(cid).startswith("-100"):
+            return f"https://t.me/c/{str(cid)[4:]}/{event.id}"
+    except Exception:
+        pass
+    return ""
 
 
 def _meaningless(text):
@@ -113,9 +123,10 @@ async def on_channel_post(event):
         print(f"Не удалось поставить реакцию: {e}")
 
     draft_text = await asyncio.to_thread(draft.generate_draft, "comment", text)
+    link = await _msg_link(event)
     action = pending.add(pending.PendingAction(
         kind="comment", chat_id=event.chat_id, reply_to_msg_id=event.id,
-        context_text=text, draft_text=draft_text,
+        context_text=text, draft_text=draft_text, link=link,
     ))
     await _notify(action)
 
@@ -133,9 +144,10 @@ async def on_chat_message(event):
         return
 
     draft_text = await asyncio.to_thread(draft.generate_draft, "chat_reply", text)
+    link = await _msg_link(event)
     action = pending.add(pending.PendingAction(
         kind="chat_reply", chat_id=event.chat_id, reply_to_msg_id=event.id,
-        context_text=text, draft_text=draft_text,
+        context_text=text, draft_text=draft_text, link=link,
     ))
     await _notify(action)
 
@@ -155,15 +167,15 @@ async def on_private_message(event):
             return
 
     draft_text = await asyncio.to_thread(draft.generate_draft, "dm_reply", text)
+    link = await _msg_link(event)
     action = pending.add(pending.PendingAction(
         kind="dm_reply", chat_id=event.chat_id, reply_to_msg_id=event.id,
-        context_text=text, draft_text=draft_text,
+        context_text=text, draft_text=draft_text, link=link,
     ))
     await _notify(action)
 
 
 async def send_action(action: pending.PendingAction, text: str):
-    """Реально отправляет одобренный (или заменённый) текст от имени Константина."""
     if action.kind == "comment":
         disc = await client(GetDiscussionMessageRequest(
             peer=action.chat_id, msg_id=action.reply_to_msg_id))
