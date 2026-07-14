@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Отдельный официальный Telegram-бот (Bot API, через @BotFather) — шлёт
-Константину в личку черновик + оригинальное сообщение с кнопками.
-Реально отправляет текст только userbot.py, после явного одобрения.
+Бот-одобрятор (Bot API, @BotFather). Шлёт Константину карточку с черновиком
+и кнопками. Реально отправляет текст только userbot.py — после одобрения.
 """
 
 import asyncio
@@ -60,11 +59,16 @@ def _esc(text, limit=None):
     return html.escape(text)
 
 
+def _link_line(action):
+    return f"\n\n🔗 <a href=\"{action.link}\">Открыть оригинал</a>" if getattr(action, "link", "") else ""
+
+
 def _card_text(action: pending.PendingAction, status: str = ""):
     label = KIND_LABEL.get(action.kind, action.kind)
     card = (f"{label}\n\n"
             f"<b>Сообщение:</b>\n{_esc(action.context_text, CONTEXT_LIMIT)}\n\n"
             f"<b>Черновик ответа:</b>\n{_esc(action.draft_text)}")
+    card += _link_line(action)
     if status:
         card += f"\n\n{status}"
     return card
@@ -123,6 +127,7 @@ async def cb_more(cq: CallbackQuery):
            f"<b>Сообщение:</b>\n{_esc(action.context_text, CONTEXT_LIMIT)}\n\n"
            f"<b>Вариант 1:</b>\n{_esc(variants[0])}\n\n"
            f"<b>Вариант 2:</b>\n{_esc(variants[1])}")
+    txt += _link_line(action)
     await cq.message.answer(txt, reply_markup=_variants_keyboard(action_id), parse_mode="HTML")
 
 
