@@ -89,6 +89,17 @@ async def _msg_link(event):
     return ""
 
 
+async def _can_comment(event):
+    """True, если у канала есть группа обсуждения и аккаунт может туда писать.
+    Тщательная проверка: реально дёргаем Telegram по этому посту."""
+    try:
+        disc = await client(GetDiscussionMessageRequest(
+            peer=event.chat_id, msg_id=event.id))
+        return bool(getattr(disc, "messages", None))
+    except Exception:
+        return False
+
+
 def _meaningless(text):
     """True, если отвечать нет смысла: короткое «спасибо/ок/👍» и т.п."""
     t = (text or "").strip().lower()
@@ -121,6 +132,11 @@ async def on_channel_post(event):
         ))
     except Exception as e:
         print(f"Не удалось поставить реакцию: {e}")
+
+    # Черновик-комментарий готовим ТОЛЬКО если у канала есть обсуждение и туда
+    # можно писать. Иначе комментировать некуда — тихо пропускаем (реакция уже стоит).
+    if not await _can_comment(event):
+        return
 
     draft_text = await asyncio.to_thread(draft.generate_draft, "comment", text)
     link = await _msg_link(event)
