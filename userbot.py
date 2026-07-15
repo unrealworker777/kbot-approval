@@ -23,6 +23,19 @@ _START_TS = None
 _ME_ID = None
 
 
+async def _valid_chats(names, kind):
+    """Оставляет только те юзернеймы, которые Telegram реально резолвит.
+    Один несуществующий канал иначе роняет обработку ВСЕХ событий."""
+    ok = []
+    for name in names:
+        try:
+            await client.get_input_entity(name)
+            ok.append(name)
+        except Exception as e:
+            print(f"[{kind}] пропускаю «{name}»: {type(e).__name__}: {e}")
+    return ok
+
+
 async def start():
     global _START_TS, _ME_ID
     await client.start(phone=config.TELEGRAM_PHONE)
@@ -31,19 +44,19 @@ async def start():
     _START_TS = datetime.now(timezone.utc)
     print(f"Юзербот запущен как {me.first_name} (id={me.id})")
 
-    if config.MONITORED_CHANNELS:
-        client.add_event_handler(
-            on_channel_post, events.NewMessage(chats=config.MONITORED_CHANNELS))
-        print(f"Слежу за каналами: {', '.join(config.MONITORED_CHANNELS)}")
+    channels = await _valid_chats(config.MONITORED_CHANNELS, "каналы")
+    if channels:
+        client.add_event_handler(on_channel_post, events.NewMessage(chats=channels))
+        print(f"Слежу за каналами ({len(channels)}): {', '.join(channels)}")
     else:
-        print("MONITORED_CHANNELS пуст — каналы не отслеживаются.")
+        print("Рабочих каналов нет — каналы не отслеживаются.")
 
-    if config.MONITORED_CHATS:
-        client.add_event_handler(
-            on_chat_message, events.NewMessage(chats=config.MONITORED_CHATS))
-        print(f"Слежу за чатами: {', '.join(config.MONITORED_CHATS)}")
+    chats = await _valid_chats(config.MONITORED_CHATS, "чаты")
+    if chats:
+        client.add_event_handler(on_chat_message, events.NewMessage(chats=chats))
+        print(f"Слежу за чатами ({len(chats)}): {', '.join(chats)}")
     else:
-        print("MONITORED_CHATS пуст — чаты не отслеживаются.")
+        print("Рабочих чатов нет — чаты не отслеживаются.")
 
     if config.DM_HANDLING != "off":
         client.add_event_handler(
@@ -90,8 +103,7 @@ async def _msg_link(event):
 
 
 async def _can_comment(event):
-    """True, если у канала есть группа обсуждения и аккаунт может туда писать.
-    Тщательная проверка: реально дёргаем Telegram по этому посту."""
+    """True, если у канала есть группа обсуждения и аккаунт может туда писать."""
     try:
         disc = await client(GetDiscussionMessageRequest(
             peer=event.chat_id, msg_id=event.id))
@@ -133,8 +145,6 @@ async def on_channel_post(event):
     except Exception as e:
         print(f"Не удалось поставить реакцию: {e}")
 
-    # Черновик-комментарий готовим ТОЛЬКО если у канала есть обсуждение и туда
-    # можно писать. Иначе комментировать некуда — тихо пропускаем (реакция уже стоит).
     if not await _can_comment(event):
         return
 
