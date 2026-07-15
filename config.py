@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Конфигурация — читает .env. Скопируй .env.example в .env и заполни."""
+"""Конфигурация — читает .env."""
 
 import os
 from dotenv import load_dotenv
@@ -19,25 +19,16 @@ TELEGRAM_PHONE = os.environ["TELEGRAM_PHONE"]
 APPROVAL_BOT_TOKEN = os.environ["APPROVAL_BOT_TOKEN"]
 APPROVAL_CHAT_ID = int(os.environ["APPROVAL_CHAT_ID"])
 
-# ANTHROPIC_API_KEY можно не задавать, если сделан `ant auth login` —
-# тогда клиент Anthropic подхватит профиль автоматически.
-
 MONITORED_CHANNELS = _split("MONITORED_CHANNELS")
 MONITORED_CHATS = _split("MONITORED_CHATS")
 
 AUTO_REACT_EMOJI = os.environ.get("AUTO_REACT_EMOJI", "👍")
 STYLE_PROFILE_PATH = os.environ.get("STYLE_PROFILE_PATH", "style/style_profile.md")
-# База знаний (методология IPM, термины) — для фактической точности ответов.
 KNOWLEDGE_BASE_PATH = os.environ.get("KNOWLEDGE_BASE_PATH", "knowledge_base.md")
 
-# Как обрабатывать входящие ЛС:
-#   off          — не готовить черновики на личку вообще
-#   non_contacts — только от тех, кого НЕТ в контактах (холодные входящие / лиды)
-#                  → переписки с семьёй/текущими клиентами не уходят в API
-#   all          — на все входящие ЛС
+# off | non_contacts | all
 DM_HANDLING = os.environ.get("DM_HANDLING", "non_contacts").strip().lower()
 
-# Модель для черновиков (Haiku — быстро и дёшево для потоковых коротких ответов)
 DRAFT_MODEL = os.environ.get("DRAFT_MODEL", "claude-haiku-4-5-20251001")
 
 # Фильтр пустых сообщений: на короткие благодарности/реакции бот не отвечает.
@@ -47,3 +38,21 @@ STOP_REPLIES = _split("STOP_REPLIES") or [
     "супер", "класс", "топ", "согласен", "верно", "точно", "+", "++", "да", "нет",
     "👍", "🔥", "❤", "🙏", "👏",
 ]
+
+# ── Фильтр релевантности: на что Константину есть смысл отвечать ──
+FILTER_MODEL = os.environ.get("FILTER_MODEL", "claude-haiku-4-5-20251001")
+TOPIC_FILTER = os.environ.get("TOPIC_FILTER", "on").strip().lower()  # on | off
+
+RELEVANT_TOPICS = """- КРТ, договоры КРТ
+- ИЖС, посёлки, малоэтажка
+- земельные участки, ВРИ, ЗОУИТ
+- финмодель, маржа, проектное финансирование
+- градостроительные нормативы, ППТ/ПМТ
+- разборы конкретных кейсов и ошибок
+- изменения в законах по стройке"""
+
+STOP_TOPICS = """- анонсы конференций и мероприятий
+- реклама курсов
+- объявления о продаже квартир
+- новости без разбора (просто факт, нечего разбирать)
+- вакансии"""
