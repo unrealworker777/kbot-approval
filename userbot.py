@@ -88,7 +88,7 @@ async def _skip_sender(event):
 
 
 async def _msg_link(event):
-    """Ссылка на оригинальный пост/сообщение: t.me/username/id или t.me/c/short/id."""
+    """Ссылка на оригинальный пост/сообщение."""
     try:
         chat = await event.get_chat()
         uname = getattr(chat, "username", None)
@@ -145,6 +145,10 @@ async def on_channel_post(event):
     except Exception as e:
         print(f"Не удалось поставить реакцию: {e}")
 
+    # Фильтр темы: если Константину тут нечего сказать по существу — молчим
+    if not await asyncio.to_thread(draft.is_relevant, text):
+        return
+
     if not await _can_comment(event):
         return
 
@@ -167,6 +171,9 @@ async def on_chat_message(event):
         return
     text = event.raw_text or ""
     if not text.strip() or _meaningless(text):
+        return
+
+    if not await asyncio.to_thread(draft.is_relevant, text):
         return
 
     draft_text = await asyncio.to_thread(draft.generate_draft, "chat_reply", text)
