@@ -1,17 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-Юзербот на личном аккаунте Константина (Telethon).
-Реакции — сразу. Тексты — только после одобрения через approval_bot.py.
+Юзербот на личном аккаунте (Telethon).
+Комментарии и чаты — через одобрение. Личка — по режиму DM_MODE.
 """
 
 import asyncio
-from datetime import datetime, timezone
+import random
+from datetime import datetime, timezone, date
 
 from telethon import TelegramClient, events
 from telethon.tl.functions.messages import GetDiscussionMessageRequest, SendReactionRequest
 from telethon.tl.types import ReactionEmoji
 
+import bitrix
 import config
+import consult
 import draft
 import pending
 
@@ -22,10 +25,24 @@ approval_notifier = None
 _START_TS = None
 _ME_ID = None
 
+# суточный лимит исходящих в личку (защита аккаунта от бана)
+_dm_day = None
+_dm_count = 0
+
+
+def _dm_quota_ok():
+    global _dm_day, _dm_count
+    today = date.today()
+    if _dm_day != today:
+        _dm_day, _dm_count = today, 0
+    if _dm_count >= config.DM_DAILY_LIMIT:
+        return False
+    _dm_count += 1
+    return True
+
 
 async def _valid_chats(names, kind):
-    """Оставляет только те юзернеймы, которые Telegram реально резолвит.
-    Один несуществующий канал иначе роняет обработку ВСЕХ событий."""
+    """Оставляет только те юзернеймы, которые Telegram реально резолвит."""
     ok = []
     for name in names:
         try:
@@ -61,7 +78,9 @@ async def start():
     if config.DM_HANDLING != "off":
         client.add_event_handler(
             on_private_message, events.NewMessage(incoming=True, func=lambda e: e.is_private))
-        print(f"Обработка ЛС: {config.DM_HANDLING}")
+        print(f"Обработка ЛС: {config.DM_HANDLING}, режим: {config.DM_MODE}"
+              + (" (АВТОНОМНО, без модерации)" if config.DM_MODE == "consult"
+                 else " (через одобрение)"))
     else:
         print("DM_HANDLING=off — личка не обрабатывается.")
 
@@ -88,7 +107,6 @@ async def _skip_sender(event):
 
 
 async def _msg_link(event):
-    """Ссылка на оригинальный пост/сообщение."""
     try:
         chat = await event.get_chat()
         uname = getattr(chat, "username", None)
@@ -103,7 +121,6 @@ async def _msg_link(event):
 
 
 async def _can_comment(event):
-    """True, если у канала есть группа обсуждения и аккаунт может туда писать."""
     try:
         disc = await client(GetDiscussionMessageRequest(
             peer=event.chat_id, msg_id=event.id))
@@ -113,7 +130,6 @@ async def _can_comment(event):
 
 
 def _meaningless(text):
-    """True, если отвечать нет смысла: короткое «спасибо/ок/👍» и т.п."""
     t = (text or "").strip().lower()
     cleaned = t.strip(" .!?)(-—…,")
     if not cleaned:
@@ -145,7 +161,6 @@ async def on_channel_post(event):
     except Exception as e:
         print(f"Не удалось поставить реакцию: {e}")
 
-    # Фильтр темы: если Константину тут нечего сказать по существу — молчим
     if not await asyncio.to_thread(draft.is_relevant, text):
         return
 
@@ -185,6 +200,37 @@ async def on_chat_message(event):
     await _notify(action)
 
 
+async def _autonomous_reply(event, text):
+    """Автономный контур: ассистент ИПМ отвечает сам (consult.py) + лид в Битрикс."""
+    if not _dm_quota_ok():
+        print("[consult] суточный лимит сообщений исчерпан — не отвечаю")
+        return
+
+    sender = await event.get_sender()
+    uid = getattr(sender, "id", None)
+    uname = getattr(sender, "username", "") or ""
+    fname = getattr(sender, "first_name", "") or ""
+
+    answer = await asyncio.to_thread(consult.reply, uid, text, fname)
+    if not answer:
+        return
+
+    await asyncio.sleep(random.randint(config.DM_DELAY_MIN, config.DM_DELAY_MAX))
+    async with client.action(event.chat_id, "typing"):
+        await asyncio.sleep(min(len(answer) / 60, 6))
+    await client.send_message(event.chat_id, answer)
+
+    lead = await asyncio.to_thread(consult.detect_lead, uid)
+    if lead:
+        await asyncio.to_thread(bitrix.create_lead, lead, uname, fname)
+        if approval_notifier is not None:
+            await _notify(pending.add(pending.PendingAction(
+                kind="dm_reply", chat_id=event.chat_id, reply_to_msg_id=event.id,
+                context_text=f"🔔 ЛИД в Битрикс от @{uname or uid}\n{lead.get('summary','')}",
+                draft_text="(лид создан автоматически, ответа не требуется)",
+            )))
+
+
 async def on_private_message(event):
     if event.out:
         return
@@ -199,6 +245,12 @@ async def on_private_message(event):
         if getattr(sender, "contact", False):
             return
 
+    # АВТОНОМНЫЙ контур: ассистент отвечает сам
+    if config.DM_MODE == "consult":
+        await _autonomous_reply(event, text)
+        return
+
+    # контур с одобрением: черновик + карточка
     draft_text = await asyncio.to_thread(draft.generate_draft, "dm_reply", text)
     link = await _msg_link(event)
     action = pending.add(pending.PendingAction(
