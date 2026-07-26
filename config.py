@@ -56,3 +56,17 @@ STOP_TOPICS = """- анонсы конференций и мероприятий
 - объявления о продаже квартир
 - новости без разбора (просто факт, нечего разбирать)
 - вакансии"""
+
+# ── АВТОНОМНЫЙ контур лички (consult.py): ассистент отвечает сам ──
+# draft   — как раньше: черновик + твоё одобрение
+# consult — автономно: ассистент честно представляется и отвечает сам
+DM_MODE = os.environ.get("DM_MODE", "draft").strip().lower()
+CONSULT_MODEL = os.environ.get("CONSULT_MODEL", "claude-sonnet-5")
+
+# Битрикс24: входящий вебхук вида https://xxx.bitrix24.ru/rest/1/xxxxx/
+BITRIX_WEBHOOK = os.environ.get("BITRIX_WEBHOOK", "").strip()
+
+# Защита аккаунта: пауза перед ответом (сек) и суточный лимит сообщений
+DM_DELAY_MIN = int(os.environ.get("DM_DELAY_MIN", "4"))
+DM_DELAY_MAX = int(os.environ.get("DM_DELAY_MAX", "15"))
+DM_DAILY_LIMIT = int(os.environ.get("DM_DAILY_LIMIT", "40"))
